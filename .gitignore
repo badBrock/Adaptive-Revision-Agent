@@ -1,0 +1,35 @@
+# Environment
+.env
+*.pkl
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+.env/
+.venv/
+env/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data / models
+*.h5
+*.ckpt
+*.pth
+*.pt
+*.joblib
+*.pickle
+*.pkl
+
+# Logs
+*.log
+vault_semantic_index.pkl
+vault_metadata_Obsidian_Vault_17a41bff.json
+vault_index_metadata.json
+vault_hashes_Obsidian_Vault_17a41bff.json
+
+data
