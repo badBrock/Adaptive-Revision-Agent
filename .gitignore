@@ -1,7 +1,7 @@
 # Environment
 .env
 *.pkl
-
+*.json
 # Python cache
 __pycache__/
 *.py[cod]
