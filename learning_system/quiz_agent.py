@@ -10,6 +10,7 @@ from tools.content_loader import ContentCache
 from tools.question_planner import QuestionPlanner
 from tools.scorer import AnswerScorer
 from state_manager import StateManager
+from tools.meta_learning import MetaLearningModule
 
 logger = logging.getLogger(__name__)
 
@@ -155,16 +156,14 @@ def provide_feedback(state: QuizAgentState) -> QuizAgentState:
     current_index = state['current_question_index']
     
     # Use cached content for context
-    combined_text = ContentCache.get_combined_text(state['content_cache'], max_chars=800)
-    base64_images = ContentCache.get_base64_images(state['content_cache'], max_images=1)
-    
+    combined_text_with_images = ContentCache.get_combined_text_with_images(state['content_cache'], max_chars=800)
     feedback_prompt = f"""
 Provide brief feedback for this answer in ONE SENTENCE only:
 
 Question: {current_question}
 User's Answer: {user_answer}
 Topic: {state['topic_name']}
-Context: {combined_text[:400]}...
+Context: {combined_text_with_images[:400]}...
 
 Give constructive feedback in exactly one sentence.
 """
@@ -174,24 +173,14 @@ Give constructive feedback in exactly one sentence.
         from groq import Groq
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         
-        content = [{"type": "text", "text": feedback_prompt}]
-        
-        # Add one cached image for context
-        if base64_images:
-            content.append({
-                "type": "image_url", 
-                "image_url": {"url": base64_images[0]}
-            })
-        
+        # CHANGED: Text-only request with larger model
         response = client.chat.completions.create(
-            messages=[{"role": "user", "content": content}],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{"role": "user", "content": feedback_prompt}],
+            model="llama-3.3-70b-versatile",  # Larger text-only model
             max_tokens=200,
             temperature=0.5
         )
-        
         feedback = response.choices[0].message.content.strip()
-        
     except Exception as e:
         logger.error(f"❌ Feedback generation failed: {str(e)}")
         feedback = f"Thank you for your answer '{user_answer}'. Let's continue!"
@@ -357,14 +346,27 @@ def create_quiz_agent_workflow():
     
     return workflow.compile()
 
-# Run function (same interface)
 def run_quiz_agent_session(user_id: str, topic_name: str):
-    """Run Quiz Agent session using modular tools"""
-    print(f"\n🎯 Quiz Agent Session - Using Modular Tools")
+    """Enhanced Quiz Agent with meta-learning"""
+    
+    # Initialize meta-learning
+    meta_module = MetaLearningModule()
+    
+    print(f"\n🎯 Enhanced Quiz Agent Session - Meta-Learning Enabled")
     print(f"👤 User: {user_id}")
     print(f"📚 Topic: {topic_name}")
+    
+    # Get learning recommendations
+    recommendations = meta_module.get_learning_recommendations(user_id, topic_name)
+    adaptations = meta_module.get_agent_adaptations(user_id, topic_name, "quiz_agent")
+    
+    print(f"🧠 Meta-Learning Insights:")
+    print(f"   Recommended difficulty: {adaptations['difficulty_adjustment']}")
+    print(f"   Focus areas: {adaptations['focus_areas']}")
+    print(f"   Learning velocity: {adaptations['learning_velocity']:.2f}")
     print("="*50)
     
+    # Your existing quiz logic here, but adapted based on recommendations
     initial_state: QuizAgentState = {
         "user_id": user_id,
         "topic_name": topic_name,
@@ -382,12 +384,31 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
         "average_score": 0.0,
         "grade": "",
         "recommendation": "",
-        "session_status": "starting"
+        "session_status": "starting",
+        # Add meta-learning data
+        "meta_adaptations": adaptations,
+        "meta_recommendations": recommendations
     }
     
     try:
         workflow = create_quiz_agent_workflow()
-        result = workflow.invoke(initial_state,config={"recursion_limit": 50})
+        result = workflow.invoke(
+            initial_state,
+            config={"recursion_limit": 20}
+        )
+        
+        # Record session outcome for meta-learning
+        session_outcome = {
+            "average_score": result['average_score'],
+            "questions_answered": result.get('questions_answered', 0),
+            "mistakes": extract_mistakes_from_qa_history(result.get('qa_history', [])),
+            "time_taken": 0,  # You can track this
+            "feedback_rating": 4  # You can ask user for feedback
+        }
+        
+        meta_module.record_session_outcome(user_id, topic_name, "quiz_agent", session_outcome)
+        
+        print(f"\n📊 Meta-Learning Updated with session results")
         
         return {
             "status": "success",
@@ -395,12 +416,27 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
             "grade": result['grade'],
             "recommendation": result['recommendation'],
             "questions_answered": len(result['scores']),
-            "qa_history": result['qa_history']
+            "qa_history": result['qa_history'],
+            "meta_insights": recommendations
         }
         
     except Exception as e:
-        logger.error(f"❌ Quiz Agent workflow failed: {str(e)}")
+        logger.error(f"❌ Enhanced Quiz Agent workflow failed: {str(e)}")
         return {
             "status": "error",
             "error": str(e)
         }
+
+def extract_mistakes_from_qa_history(qa_history: List[Dict]) -> List[Dict]:
+    """Extract mistake patterns from Q&A history"""
+    mistakes = []
+    for qa in qa_history:
+        if qa.get('score', 100) < 70:  # Consider <70% as mistake
+            mistakes.append({
+                "question": qa.get('question', ''),
+                "user_answer": qa.get('answer', ''),
+                "correct_answer": qa.get('expected_answer', ''),
+                "type": "incorrect_answer",  # You can categorize better
+                "score": qa.get('score', 0)
+            })
+    return mistakes

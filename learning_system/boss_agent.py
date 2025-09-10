@@ -9,6 +9,7 @@ import logging
 from tools.content_loader import ContentCache
 from state_manager import StateManager
 from groq import Groq
+from tools.meta_learning import MetaLearningModule
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,11 @@ def discover_content(state: BossAgentState) -> BossAgentState:
             "error_message": f"Content discovery failed: {str(e)}"
         }
 
-# Node 3: ReAct reasoning using cached content
+# Add to the top of your boss_agent.py file
+
 def react_reasoning(state: BossAgentState) -> BossAgentState:
-    """ReAct reasoning using cached content and user state"""
-    logger.info("🧠 Starting ReAct reasoning...")
+    """Enhanced ReAct reasoning with meta-learning capabilities"""
+    logger.info("🧠 Starting Enhanced ReAct reasoning with Meta-Learning...")
     
     user_state = state['user_state']
     content_cache = state['content_cache']
@@ -96,49 +98,73 @@ def react_reasoning(state: BossAgentState) -> BossAgentState:
     }
 
     # Get combined text and images from cache
-    combined_text = ContentCache.get_combined_text(content_cache, max_chars=1500)
-    base64_images = ContentCache.get_base64_images(content_cache, max_images=2)
+    combined_text_with_images = ContentCache.get_combined_text_with_images(content_cache, max_chars=1500)
+    # META-LEARNING ENHANCEMENT: Get recommendations for each topic
+    meta_module = MetaLearningModule()
+    user_id = reasoning_context["user_id"]
+    topic_recommendations = {}
+    
+    logger.info("🧠 Gathering meta-learning insights...")
+    for topic in reasoning_context["available_topics"]:
+        try:
+            recommendations = meta_module.get_learning_recommendations(user_id, topic)
+            topic_recommendations[topic] = recommendations
+        except Exception as e:
+            logger.warning(f"Failed to get meta-learning recommendations for {topic}: {e}")
+            topic_recommendations[topic] = {
+                "recommended_agent": "quiz_agent",
+                "difficulty": "medium",
+                "reasoning": "Default recommendation due to meta-learning failure"
+            }
 
+    # Enhanced reasoning prompt with meta-learning insights
     reasoning_prompt = f"""
-You are an intelligent learning coordinator (Boss Agent). Analyze the user's learning state and decide the best next action.
+You are an intelligent learning coordinator (Boss Agent) enhanced with meta-learning capabilities.
 
 USER LEARNING CONTEXT:
 {json.dumps(reasoning_context, indent=2)}
 
+META-LEARNING INSIGHTS:
+{json.dumps(topic_recommendations, indent=2)}
+
 AVAILABLE CONTENT:
-{combined_text[:500]}...
+{combined_text_with_images[:500]}...
+
+ENHANCED ROUTING RULES:
+- Use meta-learning recommendations as primary guidance
+- Score < 40%: Quiz Agent (basics/fundamentals)
+- Score 40-59%: Quiz Agent (review/standard)
+- Score 60-79%: Teaching Agent (Feynman technique)
+- Score 80%+: Teaching Agent (mastery confirmation)
+
+Consider the meta-learning insights about agent effectiveness and user patterns when making decisions.
 
 Respond with ONLY valid JSON:
 {{
-    "reasoning": "Your step-by-step thinking process",
+    "reasoning": "Your step-by-step thinking incorporating meta-learning insights",
     "recommended_topic": "specific_topic_name_from_available_topics",
-    "learning_strategy": "review|sequential|advanced|basics",
+    "recommended_agent": "quiz_agent|teaching_agent",
+    "learning_strategy": "review|sequential|advanced|basics|teaching",
     "confidence": 0.95,
     "expected_difficulty": "easy|medium|hard",
-    "session_recommendation": "quick|standard|extended"
+    "session_recommendation": "quick|standard|extended",
+    "meta_learning_applied": true
 }}
 """
 
     try:
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         
-        content = [{"type": "text", "text": reasoning_prompt}]
-        
-        # Add cached images
-        for base64_img in base64_images:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": base64_img}
-            })
-        
+        # CHANGED: Use text-only content, larger model
         response = client.chat.completions.create(
-            messages=[{"role": "user", "content": content}],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
-            max_tokens=500,
+            messages=[{"role": "user", "content": reasoning_prompt}],
+            model="llama-3.3-70b-versatile",  # Use larger text-only model
+            max_tokens=600,
             temperature=0.3
         )
         
         reasoning_text = response.choices[0].message.content.strip()
+        logger.info(f"🤖 Raw LLM response: {reasoning_text[:200]}...")
         
         # Parse JSON response
         if '{' in reasoning_text and '}' in reasoning_text:
@@ -147,40 +173,110 @@ Respond with ONLY valid JSON:
             decision = json.loads(reasoning_text[json_start:json_end])
         else:
             raise ValueError("No valid JSON found in LLM response")
-            
-        # Validate recommended topic
+        
+        # Validate and correct routing decision using meta-learning + score rules
+        decision = validate_and_correct_routing(decision, reasoning_context["topic_scores"], topic_recommendations)
+        
+        # Validate recommended topic exists
         available_topics = [doc["topic_name"] for doc in content_cache["documents"]]
         if decision.get("recommended_topic") not in available_topics:
             decision["recommended_topic"] = available_topics[0] if available_topics else None
-            
-        logger.info(f"💡 Decision: Study '{decision.get('recommended_topic')}' using '{decision.get('learning_strategy')}' strategy")
+            logger.warning(f"🔧 Corrected topic to: {decision['recommended_topic']}")
+        
+        logger.info(f"💡 Final Decision: Study '{decision.get('recommended_topic')}' using '{decision.get('recommended_agent')}' with strategy '{decision.get('learning_strategy')}'")
         
         return {
             **state,
             "reasoning_context": reasoning_context,
             "decision": decision,
+            "meta_recommendations": topic_recommendations,
             "session_status": "reasoning_complete"
         }
         
     except Exception as e:
-        logger.error(f"❌ ReAct reasoning failed: {str(e)}")
-        # Fallback decision
+        logger.error(f"❌ Enhanced ReAct reasoning failed: {str(e)}")
+        
+        # Enhanced fallback using meta-learning if available
         available_topics = [doc["topic_name"] for doc in content_cache["documents"]]
+        fallback_topic = available_topics[0] if available_topics else None
+        fallback_agent = "quiz_agent"
+        
+        # Try to use meta-learning for fallback
+        if fallback_topic and fallback_topic in topic_recommendations:
+            meta_rec = topic_recommendations[fallback_topic]
+            fallback_agent = meta_rec.get("recommended_agent", "quiz_agent")
+        
         fallback_decision = {
-            "reasoning": f"Fallback applied due to error: {str(e)}",
-            "recommended_topic": available_topics[0] if available_topics else None,
+            "reasoning": f"Fallback applied due to error: {str(e)}. Using meta-learning backup if available.",
+            "recommended_topic": fallback_topic,
+            "recommended_agent": fallback_agent,
             "learning_strategy": "basics",
             "confidence": 0.5,
             "expected_difficulty": "medium",
-            "session_recommendation": "standard"
+            "session_recommendation": "standard",
+            "meta_learning_applied": bool(topic_recommendations)
         }
         
         return {
             **state,
             "reasoning_context": reasoning_context,
             "decision": fallback_decision,
+            "meta_recommendations": topic_recommendations,
             "session_status": "reasoning_complete_fallback"
         }
+
+def validate_and_correct_routing(decision: Dict[str, Any], topic_scores: Dict, meta_recommendations: Dict) -> Dict[str, Any]:
+    """Validate LLM routing decision against score-based rules and meta-learning insights"""
+    
+    recommended_topic = decision.get("recommended_topic")
+    if not recommended_topic or recommended_topic not in topic_scores:
+        return decision  # Can't validate, trust LLM decision
+    
+    topic_data = topic_scores[recommended_topic]
+    score = topic_data.get("score", 0)
+    attempts = topic_data.get("attempts", 1)
+    llm_agent = decision.get("recommended_agent")
+    
+    # Get meta-learning recommendation for this topic
+    meta_rec = meta_recommendations.get(recommended_topic, {})
+    meta_agent = meta_rec.get("recommended_agent", llm_agent)
+    
+    # Score-based validation rules
+    if score < 40:
+        correct_agent = "quiz_agent"
+        reason = "Low score requires quiz review"
+    elif score < 60:
+        correct_agent = "quiz_agent" 
+        reason = "Moderate score needs quiz reinforcement"
+    elif score < 80:
+        correct_agent = "teaching_agent"
+        reason = "Good score ready for teaching practice"
+    else:
+        # High score - consider meta-learning and attempts
+        if attempts > 3 and meta_agent == "teaching_agent":
+            correct_agent = "teaching_agent"
+            reason = "High score with multiple attempts - continue teaching"
+        else:
+            correct_agent = "teaching_agent"
+            reason = "High score ready for advanced teaching"
+    
+    # Check if correction needed
+    if llm_agent != correct_agent:
+        logger.warning(f"🔧 Routing correction: LLM suggested {llm_agent}, but score {score}% suggests {correct_agent}")
+        decision["recommended_agent"] = correct_agent
+        decision["reasoning"] = f"Meta-corrected: {decision.get('reasoning', '')} | Adjusted {llm_agent}→{correct_agent} based on {score}% score and meta-insights. {reason}"
+        decision["meta_correction_applied"] = True
+    
+    # Apply meta-learning difficulty adjustment
+    if meta_rec.get("difficulty"):
+        original_difficulty = decision.get("expected_difficulty", "medium")
+        meta_difficulty = meta_rec["difficulty"] 
+        if original_difficulty != meta_difficulty:
+            logger.info(f"🎯 Meta-learning difficulty adjustment: {original_difficulty} → {meta_difficulty}")
+            decision["expected_difficulty"] = meta_difficulty
+    
+    return decision
+
 
 # Node 4: Execute action using StateManager
 def execute_action(state: BossAgentState) -> BossAgentState:

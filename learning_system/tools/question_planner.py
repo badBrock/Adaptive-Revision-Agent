@@ -2,7 +2,8 @@ from typing import List, Dict, Any, Optional
 from groq import Groq
 import json
 import logging
-
+import re
+from tools.content_loader import ContentCache
 logger = logging.getLogger(__name__)
 
 class QuestionPlanner:
@@ -31,59 +32,42 @@ class QuestionPlanner:
         logger.info(f"🧠 Planning {num_questions} questions at {difficulty} difficulty")
         
         # Get content from cache
-        combined_text = self._get_text_from_cache(content_cache, max_chars=2000)
-        base64_images = self._get_images_from_cache(content_cache, max_images=3)
-        
+        combined_text_with_images = ContentCache.get_combined_text_with_images(content_cache, max_chars=2000)
         # Prepare multimodal content for Groq API
         content = []
         
         planning_prompt = f"""
-You are an expert question planner. Based on the content below, create exactly {num_questions} questions that require ONE WORD answers.
+You are an expert question planner. Based on the content below, create exactly {num_questions} questions.
 
 Content Overview:
-{combined_text}
+{combined_text_with_images}
 
 Requirements:
-1. Each question must be answerable with exactly ONE WORD
+1. Each question should test understanding of key concepts
 2. Target difficulty: {difficulty}
-3. Questions should test key concepts, definitions, and main ideas
-4. Focus on concrete nouns, verbs, adjectives that are central to the topic
-5. Avoid questions requiring explanations or multiple concepts
+3. Questions should be clear and focused
+4. Focus on important topics from the content
 
-Examples of good one-word answer questions:
-- "What algorithm is primarily discussed?" → "backpropagation"
-- "What language is used for implementation?" → "Python"
-- "What type of network is described?" → "neural"
+CRITICAL: Return ONLY a valid JSON array. No explanatory text before or after.
 
-Return a JSON array with this exact format:
+Return exactly this format:
 [
     {{
-        "question": "What is the main algorithm discussed?",
-        "difficulty": "medium",
-        "expected_answer_type": "algorithm name",
-        "topic_area": "machine learning"
+        "question": "What is the main concept discussed?",
+        "difficulty": "{difficulty}",
+        "expected_answer_type": "concept",
+        "topic_area": "general"
     }}
 ]
 
-Generate exactly {num_questions} one-word answer questions:
+Generate exactly {num_questions} questions:
 """
         
-        content.append({"type": "text", "text": planning_prompt})
-        
-        # Add images for visual context
-        for base64_img in base64_images:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": base64_img}
-            })
-        
         try:
+            # CHANGED: Text-only request with larger model
             response = self.client.chat.completions.create(
-                messages=[{
-                    "role": "user",
-                    "content": content
-                }],
-                model="meta-llama/llama-4-scout-17b-16e-instruct",
+                messages=[{"role": "user", "content": planning_prompt}],
+                model="llama-3.3-70b-versatile",  # Larger text-only model
                 max_tokens=1000,
                 temperature=0.7
             )
@@ -91,8 +75,14 @@ Generate exactly {num_questions} one-word answer questions:
             planning_text = response.choices[0].message.content.strip()
             logger.info(f"🧠 Raw planning response: {planning_text}")
             
-            # Extract JSON
-            question_plan = self._extract_json_from_response(planning_text)
+            # Extract JSON using robust method
+            question_plan = self._extract_json_array(planning_text)  # ← FIXED: Remove "safe_"
+            
+            if not question_plan:
+                raise ValueError("No valid JSON questions found in response")
+            
+    # ... rest of your code
+
             
             # Validate and ensure we have the right number of questions
             if len(question_plan) != num_questions:
@@ -122,30 +112,78 @@ Generate exactly {num_questions} one-word answer questions:
         """Extract base64 images from cache"""
         return [img["base64"] for img in cache["images"][:max_images]]
     
-    def _extract_json_from_response(self, response_text: str) -> List[Dict[str, Any]]:
-        """Extract JSON array from LLM response"""
+    def _extract_json_array(self, response_text: str) -> List[Dict[str, Any]]:
+        """Safely extract JSON array from LLM response with extra text"""
+        logger.info("🔍 Extracting JSON from response...")
+        
+        # Method 1: Try to find complete JSON array
         try:
-            # Find JSON array in response
-            if '[' in response_text and ']' in response_text:
-                json_start = response_text.find('[')
-                json_end = response_text.rfind(']') + 1
+            json_start = response_text.find('[')
+            json_end = response_text.rfind(']') + 1
+            
+            if json_start != -1 and json_end > json_start:
                 json_str = response_text[json_start:json_end]
-                question_plan = json.loads(json_str)
+                # Clean up potential issues
+                json_str = re.sub(r'\n\s*\n', '\n', json_str)  # Remove extra newlines
+                json_str = json_str.strip()
                 
-                # Validate structure
-                if isinstance(question_plan, list) and len(question_plan) > 0:
-                    for q in question_plan:
-                        if not isinstance(q, dict) or "question" not in q:
-                            raise ValueError("Invalid question structure")
-                    return question_plan
-                else:
-                    raise ValueError("Empty or invalid question list")
-            else:
-                raise ValueError("No JSON array found in response")
+                parsed_json = json.loads(json_str)
+                logger.info(f"✅ Successfully extracted {len(parsed_json)} questions")
+                return parsed_json
+                
+        except json.JSONDecodeError as e:
+            logger.warning(f"Method 1 failed: {e}")
+            pass
+        
+        # Method 2: Extract individual JSON objects and combine
+        try:
+            json_objects = []
+            # Find all JSON object patterns
+            pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(pattern, response_text, re.DOTALL)
+            
+            for match in matches:
+                try:
+                    obj = json.loads(match.strip())
+                    if 'question' in obj:  # Validate it's a question object
+                        json_objects.append(obj)
+                except json.JSONDecodeError:
+                    continue
+            
+            if json_objects:
+                logger.info(f"✅ Extracted {len(json_objects)} questions using method 2")
+                return json_objects
                 
         except Exception as e:
-            logger.error(f"JSON extraction failed: {str(e)}")
-            raise
+            logger.warning(f"Method 2 failed: {e}")
+            pass
+        
+        # Method 3: Try to extract using line-by-line parsing
+        try:
+            json_objects = []
+            lines = response_text.split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if line.startswith('{') and line.endswith('}'):
+                    try:
+                        obj = json.loads(line)
+                        if 'question' in obj:
+                            json_objects.append(obj)
+                    except json.JSONDecodeError:
+                        continue
+            
+            if json_objects:
+                logger.info(f"✅ Extracted {len(json_objects)} questions using method 3")
+                return json_objects
+                
+        except Exception as e:
+            logger.warning(f"Method 3 failed: {e}")
+            pass
+        
+        # Method 4: Fallback - return empty list
+        logger.error("❌ All JSON extraction methods failed")
+        return []
     
     def _create_fallback_questions(self, cache: Dict[str, Any], num_questions: int) -> List[Dict[str, Any]]:
         """Create fallback questions when LLM planning fails"""

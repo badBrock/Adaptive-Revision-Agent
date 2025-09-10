@@ -1,0 +1,244 @@
+(env) PS E:\7. Projects From Sem 3\RAG\learning_system> python integration.py
+🎓 Integrated Learning System - Boss Agent + Quiz/Teaching Agents
+======================================================================
+Enter User ID: brock
+Enter content folder path: E:\7. Projects From Sem 3\RAG\data\rag_8_Weight_Initilization_20250906_032237
+
+🤖 INTEGRATED LEARNING SYSTEM
+============================================================
+👤 User: brock
+📁 Content: E:\7. Projects From Sem 3\RAG\data\rag_8_Weight_Initilization_20250906_032237
+============================================================
+
+🧠 STEP 1: Boss Agent Decision Making...
+
+🤖 Boss Agent Session - Using Modular Tools
+👤 User: brock
+📁 Content: E:\7. Projects From Sem 3\RAG\data\rag_8_Weight_Initilization_20250906_032237
+============================================================
+INFO:boss_agent:🤖 Initializing Boss Agent for user: brock
+INFO:state_manager:✅ Loaded user state for 'brock'
+INFO:boss_agent:🔍 Discovering content using ContentCache...
+INFO:tools.content_loader:✅ Content cached: 1 documents, 4 images
+INFO:boss_agent:📁 Content discovered:
+Content Summary:
+Documents (1):
+- context: 503 words
+Images: 4 files
+Folder: E:\7. Projects From Sem 3\RAG\data\rag_8_Weight_Initilization_20250906_032237
+
+INFO:boss_agent:🧠 Starting ReAct reasoning...
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:boss_agent:💡 Decision: Study 'context' using 'review' strategy
+INFO:boss_agent:⚡ Executing action...
+INFO:state_manager:📄 Created quiz session: brock_context_20250909_193947.json
+INFO:boss_agent:📊 Updating learning progress...
+WARNING:boss_agent:⚠️ No quiz results to update progress
+
+✅ Boss Agent Session Complete!
+📊 Status: progress_update_skipped
+✅ Boss Agent recommends studying: 'context'
+📚 Learning Strategy: review
+🎯 Recommended Agent: quiz_agent
+
+🎯 STEP 2: Quiz Agent Session...
+
+🎯 Quiz Agent Session - Using Modular Tools
+👤 User: brock
+📚 Topic: context
+==================================================
+INFO:quiz_agent:📁 Loading content for topic: context
+INFO:tools.content_loader:✅ Content cached: 1 documents, 4 images
+INFO:quiz_agent:✅ Content cached using ContentCache tool
+INFO:quiz_agent:🧠 Planning questions using QuestionPlanner tool...
+INFO:tools.question_planner:🧠 Planning 3 questions at medium difficulty
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:tools.question_planner:🧠 Raw planning response: Here are three one-word answer questions based on the provided content:
+
+[
+  {
+    "question": "What is the problem with zero initialization?",
+    "difficulty": "medium",
+    "expected_answer_type": "redundancy",
+    "topic_area": "weight initialization"
+  },
+  {
+    "question": "What type of initialization is recommended?",
+    "difficulty": "medium",
+    "expected_answer_type": "random",
+    "topic_area": "weight initialization"
+  },
+  {
+    "question": "What problem occurs with large weights?",
+    "difficulty": "medium",
+    "expected_answer_type": "saturation",
+    "topic_area": "weight initialization"
+  }
+]
+
+Let me know if you need any adjustments!
+INFO:tools.question_planner:📋 Successfully planned 3 questions
+INFO:quiz_agent:📋 QuestionPlanner generated 3 questions
+
+🎯 Question 1/3 (medium)
+📝 What is the problem with zero initialization?
+💡 Provide your answer
+
+👤 Your answer: in zero initilzation the neural network just die out as it has no weights to udpate or to infer with.  
+INFO:quiz_agent:📝 User answered: 'in zero initilzation the neural network just die out as it has no weights to udpate or to infer with.'
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+
+💭 Feedback: The user's answer could be improved by providing a more precise explanation, specifically that zero initialization leads to the dying ReLU problem where neurons output zero for all inputs, resulting in no updates during backpropagation.
+INFO:tools.scorer:🎯 Scoring answer: 'in zero initilzation the neural network just die out as it has no weights to udpate or to infer with.' for question: 'What is the problem with zero initialization?...'
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:tools.scorer:🎯 Score assigned: 60.0/100
+
+🎯 Score: 60.0/100
+
+🎯 Question 2/3 (medium)
+📝 What type of initialization is recommended?
+💡 Provide your answer
+
+👤 Your answer: i would recommend using he or xavier initilization technique which can tackle the vanishing gradient problem as well as exploding gradient problem esp with an activation function like relu.
+INFO:quiz_agent:📝 User answered: 'i would recommend using he or xavier initilization technique which can tackle the vanishing gradient problem as well as exploding gradient problem esp with an activation function like relu.'
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+
+💭 Feedback: The answer effectively recommends He or Xavier initialization as a solution to tackle the vanishing and exploding gradient problems, especially when used with activation functions like ReLU.
+INFO:tools.scorer:🎯 Scoring answer: 'i would recommend using he or xavier initilization technique which can tackle the vanishing gradient problem as well as exploding gradient problem esp with an activation function like relu.' for question: 'What type of initialization is recommended?...'
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:tools.scorer:🎯 Score assigned: 70.0/100
+
+🎯 Score: 70.0/100
+
+🎯 Question 3/3 (medium)
+📝 What problem occurs with large weights?
+💡 Provide your answer
+
+👤 Your answer: large weight would mean that the neural network has unstable convergence as on updation of the weight in gradient descent. the training would be ineffic
+ient 
+INFO:quiz_agent:📝 User answered: 'large weight would mean that the neural network has unstable convergence as on updation of the weight in gradient descent. the training would be inefficient'
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+
+💭 Feedback: The user's answer is close but could be more precise, as large weights primarily lead to the vanishing or exploding gradient problem rather than just unstable convergence and inefficient training.
+INFO:tools.scorer:🎯 Scoring answer: 'large weight would mean that the neural network has unstable convergence as on updation of the weight in gradient descent. the training would be inefficient' for question: 'What problem occurs with large weights?...'
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:tools.scorer:🎯 Score assigned: 60.0/100
+
+🎯 Score: 60.0/100
+INFO:state_manager:📊 Saved quiz results: brock_context_results_20250909_194341.json
+
+============================================================
+🎉 QUIZ SESSION COMPLETE!
+============================================================
+📚 Topic: context
+❓ Questions Answered: 3
+📊 Individual Scores: ['60.0', '70.0', '60.0']
+🏆 Average Score: 63.33/100
+🎯 Final Grade: 🟡 Needs Revision
+💡 Recommendation: Partial understanding. Review the material and try more questions.
+============================================================
+✅ Quiz Agent completed!
+🏆 Final Score: 63.33/100
+🎯 Grade: 🟡 Needs Revision
+
+📊 STEP 3: Updating Boss Agent with Quiz Agent Results...
+
+🤖 Boss Agent Session - Using Modular Tools
+👤 User: brock
+📁 Content: E:\7. Projects From Sem 3\RAG\data\rag_8_Weight_Initilization_20250906_032237
+============================================================
+INFO:boss_agent:🤖 Initializing Boss Agent for user: brock
+INFO:state_manager:✅ Loaded user state for 'brock'
+INFO:boss_agent:🔍 Discovering content using ContentCache...
+INFO:tools.content_loader:✅ Content cached: 1 documents, 4 images
+INFO:boss_agent:📁 Content discovered:
+Content Summary:
+Documents (1):
+- context: 503 words
+Images: 4 files
+Folder: E:\7. Projects From Sem 3\RAG\data\rag_8_Weight_Initilization_20250906_032237
+
+INFO:boss_agent:🧠 Starting ReAct reasoning...
+INFO:httpx:HTTP Request: POST https://api.groq.com/openai/v1/chat/completions "HTTP/1.1 200 OK"
+INFO:boss_agent:💡 Decision: Study 'context' using 'review' strategy
+INFO:boss_agent:⚡ Executing action...
+INFO:state_manager:📄 Created quiz session: brock_context_20250909_194342.json
+INFO:boss_agent:📊 Updating learning progress...
+INFO:state_manager:✅ Loaded user state for 'brock'
+INFO:state_manager:✅ Loaded user state for 'brock'
+INFO:state_manager:✅ Saved user state for 'brock'
+INFO:state_manager:✅ Loaded user state for 'brock'
+INFO:boss_agent:📊 Updated progress: Topic 'context' scored 63.3
+
+✅ Boss Agent Session Complete!
+📊 Status: progress_updated
+🎯 Recommended Topic: context
+📚 Learning Strategy: review
+📄 Quiz Session File: ./states\quiz_sessions\brock_context_20250909_194342.json
+🏆 Overall Progress: 63.3%
+✅ Learning progress updated successfully!
+INFO:state_manager:✅ Loaded user state for 'brock'
+INFO:boss_agent:📊 Updated progress: Topic 'context' scored 63.3
+
+✅ Boss Agent Session Complete!
+📊 Status: progress_updated
+🎯 Recommended Topic: context
+📚 Learning Strategy: review
+📄 Quiz Session File: ./states\quiz_sessions\brock_context_20250909_194342.json
+🏆 Overall Progress: 63.3%
+✅ Learning progress updated successfully!
+INFO:boss_agent:📊 Updated progress: Topic 'context' scored 63.3
+
+✅ Boss Agent Session Complete!
+📊 Status: progress_updated
+🎯 Recommended Topic: context
+📚 Learning Strategy: review
+📄 Quiz Session File: ./states\quiz_sessions\brock_context_20250909_194342.json
+🏆 Overall Progress: 63.3%
+✅ Learning progress updated successfully!
+
+📊 Status: progress_updated
+🎯 Recommended Topic: context
+📚 Learning Strategy: review
+📄 Quiz Session File: ./states\quiz_sessions\brock_context_20250909_194342.json
+🏆 Overall Progress: 63.3%
+✅ Learning progress updated successfully!
+
+🎉 LEARNING SESSION COMPLETE!
+📄 Quiz Session File: ./states\quiz_sessions\brock_context_20250909_194342.json
+🏆 Overall Progress: 63.3%
+✅ Learning progress updated successfully!
+
+🎉 LEARNING SESSION COMPLETE!
+
+🎉 LEARNING SESSION COMPLETE!
+🎉 LEARNING SESSION COMPLETE!
+============================================================
+📚 Topic Studied: context
+🤖 Agent Used: Quiz Agent
+❓ Questions/Prompts Answered: 3
+🏆 Session Score: 63.33/100
+🤖 Agent Used: Quiz Agent
+❓ Questions/Prompts Answered: 3
+🏆 Session Score: 63.33/100
+🎯 Grade: 🟡 Needs Revision
+📈 Overall Progress: 63.3%
+❓ Questions/Prompts Answered: 3
+🏆 Session Score: 63.33/100
+🎯 Grade: 🟡 Needs Revision
+📈 Overall Progress: 63.3%
+🎯 Grade: 🟡 Needs Revision
+📈 Overall Progress: 63.3%
+💡 Recommendation: Partial understanding. Review the material and try more questions.
+📈 Overall Progress: 63.3%
+💡 Recommendation: Partial understanding. Review the material and try more questions.
+💡 Recommendation: Partial understanding. Review the material and try more questions.
+============================================================
+============================================================
+
+✅ Integration completed successfully!
+✅ Integration completed successfully!
+
+
+Would you like to run another learning session? (y/n): n
+(env) PS E:\7. Projects From Sem 3\RAG\learning_system>

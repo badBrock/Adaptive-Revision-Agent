@@ -4,7 +4,7 @@ import os
 import re
 import base64
 import logging
-
+from groq import Groq
 logger = logging.getLogger(__name__)
 
 class ContentCache:
@@ -107,7 +107,12 @@ class ContentCache:
             "cache_timestamp": None
         }
         
-        logger.info(f"✅ Content cached: {len(documents)} documents, {len(encoded_images)} images")
+        # NEW: Generate image descriptions if images exist
+        if encoded_images:
+            logger.info("🖼️ Generating image descriptions...")
+            content_cache = ContentCache.extract_image_descriptions(content_cache)
+            logger.info("✅ Image descriptions generated")
+        
         return content_cache
 
     @staticmethod
@@ -135,3 +140,52 @@ Folder: {cache['folder_path']}
     def get_base64_images(cache: Dict[str, Any], max_images: int = 3) -> List[str]:
         """Get list of base64 encoded images, limited by max_images"""
         return [img["base64"] for img in cache["images"][:max_images]]
+
+    # Add these methods to the ContentCache class in content_loader.py
+
+    @staticmethod
+    def extract_image_descriptions(cache: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert images to text descriptions once and cache them"""
+        import os
+        from groq import Groq
+        
+        client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+        
+        for img in cache["images"]:
+            if "description" not in img:  # Only process if not cached
+                try:
+                    response = client.chat.completions.create(
+                        messages=[{
+                            "role": "user", 
+                            "content": [
+                                {"type": "text", "text": "Describe this image in detail for educational content:"},
+                                {"type": "image_url", "image_url": {"url": img["base64"]}}
+                            ]
+                        }],
+                        model="meta-llama/llama-4-scout-17b-16e-instruct",
+                        max_tokens=200
+                    )
+                    img["description"] = response.choices[0].message.content.strip()
+                    logger.info(f"✅ Generated description for {img['filename']}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to describe {img['filename']}: {str(e)}")
+                    img["description"] = f"Image: {img['filename']} (description failed)"
+        
+        return cache
+
+    @staticmethod
+    def get_combined_text_with_images(cache: Dict[str, Any], max_chars: int = 3000) -> str:
+        """Get combined text including image descriptions"""
+        text_parts = []
+        
+        # Add document text
+        for doc in cache["documents"]:
+            text_parts.append(f"Document: {doc['topic_name']}\n{doc['markdown']}")
+        
+        # Add image descriptions
+        for img in cache["images"]:
+            if "description" in img:
+                text_parts.append(f"Image ({img['filename']}): {img['description']}")
+        
+        combined = "\n\n".join(text_parts)
+        return combined[:max_chars] if len(combined) > max_chars else combined

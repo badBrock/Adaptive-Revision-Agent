@@ -2,7 +2,7 @@ from typing import Dict, Any, Optional ,List
 from groq import Groq
 import re
 import logging
-
+from tools.content_loader import ContentCache
 logger = logging.getLogger(__name__)
 
 class AnswerScorer:
@@ -35,8 +35,7 @@ class AnswerScorer:
         logger.info(f"🎯 Scoring answer: '{user_answer}' for question: '{question[:50]}...'")
         
         # Get reference content from cache
-        reference_text = self._get_reference_text(content_cache, max_chars=800)
-        base64_images = self._get_reference_images(content_cache, max_images=2)
+        reference_text_with_images = ContentCache.get_combined_text_with_images(content_cache, max_chars=800)
         
         # Prepare scoring prompt
         scoring_prompt = f"""
@@ -48,7 +47,7 @@ Expected Answer Type: {question_info.get('expected_answer_type', 'concept') if q
 Difficulty Level: {question_info.get('difficulty', 'medium') if question_info else 'medium'}
 
 Reference Content (first 800 chars):
-{reference_text}
+{reference_text_with_images}
 
 Scoring Criteria:
 - 90-100: Perfect or excellent answer, directly correct
@@ -65,23 +64,11 @@ Additional Context:
 Return ONLY a number from 0-100:
 """
         
-        # Prepare content for API call
-        content = [{"type": "text", "text": scoring_prompt}]
-        
-        # Add images for context
-        for base64_img in base64_images:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": base64_img}
-            })
-        
         try:
+        # CHANGED: Text-only request with larger model
             response = self.client.chat.completions.create(
-                messages=[{
-                    "role": "user",
-                    "content": content
-                }],
-                model="meta-llama/llama-4-scout-17b-16e-instruct",
+                messages=[{"role": "user", "content": scoring_prompt}],
+                model="llama-3.3-70b-versatile",  # Larger text-only model
                 max_tokens=50,
                 temperature=0
             )
@@ -204,11 +191,11 @@ Return ONLY a number from 0-100:
         average_score = sum(scores) / len(scores)
         
         # Determine grade and recommendations
-        if average_score >= 80:
+        if average_score >= 60:
             grade = "🟢 Pass"
             recommendation = "Excellent! You have strong understanding. Move to the next topic."
             performance_level = "excellent"
-        elif average_score >= 60:
+        elif average_score >= 40:
             grade = "🟡 Needs Revision"
             recommendation = "Partial understanding. Review the material and try more questions."
             performance_level = "partial"
@@ -224,8 +211,8 @@ Return ONLY a number from 0-100:
             "performance_level": performance_level,
             "total_questions": len(scores),
             "score_distribution": {
-                "excellent": len([s for s in scores if s >= 80]),
-                "good": len([s for s in scores if 60 <= s < 80]),
-                "poor": len([s for s in scores if s < 60])
+                "excellent": len([s for s in scores if s >= 60]),
+                "good": len([s for s in scores if 40 <= s < 60]),
+                "poor": len([s for s in scores if s < 40])
             }
         }
