@@ -4,6 +4,8 @@ import os
 import json
 from datetime import datetime
 import logging
+from tools.agent_integration import trigger_conversational_tutoring, integrate_with_quiz_agent
+from conversational_tutor_agent import start_conversational_tutoring
 
 # Import our modular tools
 from tools.content_loader import ContentCache
@@ -32,6 +34,13 @@ class QuizAgentState(TypedDict):
     grade: str
     recommendation: str
     session_status: str
+    # 🔧 NEW: Conversational tutoring fields
+    conversational_tutoring_completed: bool
+    tutoring_result: Dict[str, Any]
+    understanding_improved: bool
+    # Meta-learning fields
+    meta_adaptations: Dict[str, Any]
+    meta_recommendations: Dict[str, Any]
 
 # Node 1: Load content using ContentCache tool
 def load_and_cache_content(state: QuizAgentState) -> QuizAgentState:
@@ -127,7 +136,7 @@ def generate_question(state: QuizAgentState) -> QuizAgentState:
     
     print(f"\n🎯 Question {current_index + 1}/{state['total_questions']} ({question_info.get('difficulty', 'medium')})")
     print(f"📝 {current_question}")
-    print(f"💡 Provide your answer")
+    
 
     
     return {
@@ -137,17 +146,48 @@ def generate_question(state: QuizAgentState) -> QuizAgentState:
     }
 
 # Node 4: Collect one-word answer (same as before)
-def collect_answer(state: QuizAgentState) -> QuizAgentState:
-    """Collect free-form answer from user"""
-    user_answer = input("\n👤 Your answer: ").strip()
+def collect_one_word_answer(state: QuizAgentState) -> QuizAgentState:
+    """Enhanced to detect confusion and trigger conversational tutoring"""
     
+    
+    user_answer = input("👤 Your answer: ").strip()
+    
+    # 🔧 NEW: Check for confusion signals
+    if trigger_conversational_tutoring(user_answer, state):
+        logger.info(f"🎓 Confusion detected: '{user_answer}' - Starting conversational tutoring")
+        
+        # Trigger conversational tutoring
+        tutoring_result = start_conversational_tutoring(
+            user_id=state['user_id'],
+            topic=state['topic_name'], 
+            entry_context={
+                "from_agent": "quiz_agent",
+                "failed_question": state['current_question'],
+                "user_response": user_answer,
+                "confusion_signal": user_answer,
+                "messages": [
+                    {"role": "system", "content": f"User struggled with: {state['current_question']}"},
+                    {"role": "user", "content": f"I need help: {user_answer}"}
+                ]
+            }
+        )
+        
+        # Update state with conversational tutoring results
+        return {
+            **state,
+            "conversational_tutoring_completed": True,
+            "tutoring_result": tutoring_result,
+            "understanding_improved": tutoring_result.get("session_outcome") in ["mastery_achieved", "good_progress"],
+            "session_status": "conversational_tutoring_complete"
+        }
+    
+    # Normal quiz flow if no confusion
     logger.info(f"📝 User answered: '{user_answer}'")
     return {
         **state,
         "user_answer": user_answer,
         "session_status": "answer_collected"
     }
-
 # Node 5: Provide feedback using cached content
 def provide_feedback(state: QuizAgentState) -> QuizAgentState:
     """Provide feedback using cached content (no re-sending)"""
@@ -192,6 +232,35 @@ Give constructive feedback in exactly one sentence.
         "feedback": feedback,
         "session_status": "feedback_provided"
     }
+# In quiz_agent.py - check_tutoring_outcome function:
+def check_tutoring_outcome(state: QuizAgentState) -> QuizAgentState:
+    """Handle results from conversational tutoring session"""
+    
+    tutoring_result = state.get("tutoring_result", {})
+    outcome = tutoring_result.get("session_outcome", "needs_practice")
+    session_status = tutoring_result.get("session_status", "completed")
+    
+    # 🔧 NEW: Handle user-requested exit
+    if session_status == "exited" or outcome == "early_exit":
+        print("👋 Welcome back! Let's continue with your quiz.")
+        return {
+            **state,
+            "user_answer": "",  # Clear previous answer
+            "session_status": "returned_from_tutoring"
+        }
+    elif outcome in ["mastery_achieved", "good_progress"]:
+        print("🎉 Great! You've improved your understanding. Let's try the question again!")
+        return {
+            **state,
+            "user_answer": "",
+            "session_status": "ready_for_retry"
+        }
+    else:
+        print("💪 Let's continue with some feedback and move forward.")
+        return {
+            **state,
+            "session_status": "continue_normal_flow"
+        }
 
 # Node 6: Score answer using AnswerScorer tool
 def score_answer(state: QuizAgentState) -> QuizAgentState:
@@ -252,6 +321,18 @@ def session_manager(state: QuizAgentState) -> str:
         return "generate_question"
     else:
         return "finalize_session"
+def continue_or_end(state: QuizAgentState) -> str:
+    """Decide whether to continue with more questions or finalize session"""
+    current_index = state['current_question_index']
+    total_questions = state['total_questions']
+    
+    logger.info(f"🔄 Routing decision: {current_index}/{total_questions} questions completed")
+    
+    if current_index < total_questions:
+        return "generate_question"
+    else:
+        return "finalize_session"
+
 
 # Node 8: Finalize session using AnswerScorer for grading
 def finalize_session(state: QuizAgentState) -> QuizAgentState:
@@ -315,27 +396,45 @@ def finalize_session(state: QuizAgentState) -> QuizAgentState:
 
 # Build Quiz Agent workflow (same structure)
 def create_quiz_agent_workflow():
-    """Create Quiz Agent LangGraph workflow using modular tools"""
+    """Enhanced workflow with conversational tutoring integration"""
+    
     workflow = StateGraph(QuizAgentState)
     
+    # Add all nodes
     workflow.add_node("load_and_cache_content", load_and_cache_content)
     workflow.add_node("plan_questions", plan_questions)
     workflow.add_node("generate_question", generate_question)
-    workflow.add_node("collect_one_word_answer", collect_answer)
+    workflow.add_node("collect_one_word_answer", collect_one_word_answer)
     workflow.add_node("provide_feedback", provide_feedback)
     workflow.add_node("score_answer", score_answer)
     workflow.add_node("finalize_session", finalize_session)
+    workflow.add_node("check_tutoring_outcome", check_tutoring_outcome)
     
+    # Set entry point
     workflow.set_entry_point("load_and_cache_content")
+    
+    # Linear flow
     workflow.add_edge("load_and_cache_content", "plan_questions")
     workflow.add_edge("plan_questions", "generate_question")
     workflow.add_edge("generate_question", "collect_one_word_answer")
-    workflow.add_edge("collect_one_word_answer", "provide_feedback")
+    
+    # Conditional edge for conversational tutoring
+    workflow.add_conditional_edges(
+        "collect_one_word_answer",
+        lambda state: "tutoring_complete" if state.get("conversational_tutoring_completed") else "continue_quiz",
+        {
+            "tutoring_complete": "check_tutoring_outcome",
+            "continue_quiz": "provide_feedback"
+        }
+    )
+    
+    # Continue normal flow
     workflow.add_edge("provide_feedback", "score_answer")
     
+    # 🔧 THIS IS WHERE continue_or_end IS USED
     workflow.add_conditional_edges(
-        "score_answer",
-        session_manager,
+        "score_answer", 
+        continue_or_end,  # This function was missing!
         {
             "generate_question": "generate_question",
             "finalize_session": "finalize_session"
@@ -344,10 +443,21 @@ def create_quiz_agent_workflow():
     
     workflow.add_edge("finalize_session", END)
     
+    # Handle tutoring outcome
+    workflow.add_conditional_edges(
+        "check_tutoring_outcome", 
+        lambda state: "retry_question" if state.get("understanding_improved") else "continue_quiz",
+        {
+            "retry_question": "generate_question",
+            "continue_quiz": "provide_feedback"
+        }
+    )
+    
     return workflow.compile()
 
+
 def run_quiz_agent_session(user_id: str, topic_name: str):
-    """Enhanced Quiz Agent with meta-learning"""
+    """Enhanced Quiz Agent with conversational tutoring support"""
     
     # Initialize meta-learning
     meta_module = MetaLearningModule()
@@ -366,7 +476,7 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
     print(f"   Learning velocity: {adaptations['learning_velocity']:.2f}")
     print("="*50)
     
-    # Your existing quiz logic here, but adapted based on recommendations
+    # Your existing initial_state setup...
     initial_state: QuizAgentState = {
         "user_id": user_id,
         "topic_name": topic_name,
@@ -387,23 +497,39 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
         "session_status": "starting",
         # Add meta-learning data
         "meta_adaptations": adaptations,
-        "meta_recommendations": recommendations
+        "meta_recommendations": recommendations,
+        # 🔧 NEW: Add conversational tutoring tracking
+        "conversational_tutoring_completed": False,
+        "tutoring_result": {},
+        "understanding_improved": False
     }
     
     try:
         workflow = create_quiz_agent_workflow()
         result = workflow.invoke(
             initial_state,
-            config={"recursion_limit": 20}
+            config={
+                "recursion_limit": 30,  # 🔧 Increased for conversational tutoring
+                "configurable": {"thread_id": f"quiz_session_{user_id}_{topic_name}"}  # 🔧 Memory persistence
+            }
         )
+        
+        # 🔧 NEW: Check if conversational tutoring was used
+        if result.get("conversational_tutoring_completed"):
+            print(f"\n🎓 Conversational tutoring was activated during this session!")
+            tutoring_outcome = result.get("tutoring_result", {}).get("session_outcome", "unknown")
+            print(f"📊 Tutoring outcome: {tutoring_outcome}")
         
         # Record session outcome for meta-learning
         session_outcome = {
-            "average_score": result['average_score'],
-            "questions_answered": result.get('questions_answered', 0),
+            "average_score": result.get('average_score', 0),
+            "questions_answered": len(result.get('scores', [])),
             "mistakes": extract_mistakes_from_qa_history(result.get('qa_history', [])),
-            "time_taken": 0,  # You can track this
-            "feedback_rating": 4  # You can ask user for feedback
+            "time_taken": 0,
+            "feedback_rating": 4,
+            # 🔧 NEW: Track conversational tutoring usage
+            "conversational_tutoring_used": result.get("conversational_tutoring_completed", False),
+            "tutoring_effectiveness": result.get("tutoring_result", {}).get("session_outcome", "not_used")
         }
         
         meta_module.record_session_outcome(user_id, topic_name, "quiz_agent", session_outcome)
@@ -412,12 +538,15 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
         
         return {
             "status": "success",
-            "average_score": result['average_score'],
-            "grade": result['grade'],
-            "recommendation": result['recommendation'],
-            "questions_answered": len(result['scores']),
-            "qa_history": result['qa_history'],
-            "meta_insights": recommendations
+            "average_score": result.get('average_score', 0),
+            "grade": result.get('grade', 'N/A'),
+            "recommendation": result.get('recommendation', 'No recommendation'),
+            "questions_answered": len(result.get('scores', [])),
+            "qa_history": result.get('qa_history', []),
+            "meta_insights": recommendations,
+            # 🔧 NEW: Return conversational tutoring info
+            "conversational_tutoring_used": result.get("conversational_tutoring_completed", False),
+            "tutoring_result": result.get("tutoring_result", {})
         }
         
     except Exception as e:

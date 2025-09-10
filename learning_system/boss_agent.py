@@ -10,7 +10,9 @@ from tools.content_loader import ContentCache
 from state_manager import StateManager
 from groq import Groq
 from tools.meta_learning import MetaLearningModule
-
+from tools.conversational_tutoring_tools import CHATBOT_TOOLS
+from conversational_tutor_agent import start_conversational_tutoring
+from tools.agent_integration import detect_confusion_in_conversation
 logger = logging.getLogger(__name__)
 
 class BossAgentState(TypedDict):
@@ -85,7 +87,11 @@ def react_reasoning(state: BossAgentState) -> BossAgentState:
     
     user_state = state['user_state']
     content_cache = state['content_cache']
-    
+    available_tools = CHATBOT_TOOLS
+    tool_descriptions = "\n".join([
+        f"- {tool['name']}: {tool['description']}" 
+        for tool in available_tools
+    ])
     # Prepare reasoning context
     reasoning_context = {
         "user_id": state['user_id'],
@@ -94,7 +100,11 @@ def react_reasoning(state: BossAgentState) -> BossAgentState:
         "topic_scores": user_state.get("topics", {}),
         "available_topics": [doc["topic_name"] for doc in content_cache["documents"]],
         "overall_progress": user_state.get("overall_progress", 0.0),
-        "content_summary": ContentCache.get_content_summary(content_cache)
+        "content_summary": ContentCache.get_content_summary(content_cache),
+        "user_scores": state['user_state'].get("topics", {}),
+        "recent_performance": state.get("recent_performance", []),
+        "confusion_signals": detect_confusion_in_conversation(state),  # 🔧 NEW
+        "session_history": state.get("session_history", [])
     }
 
     # Get combined text and images from cache
@@ -118,8 +128,8 @@ def react_reasoning(state: BossAgentState) -> BossAgentState:
             }
 
     # Enhanced reasoning prompt with meta-learning insights
-    reasoning_prompt = f"""
-You are an intelligent learning coordinator (Boss Agent) enhanced with meta-learning capabilities.
+    unified_reasoning_prompt = f"""
+You are an intelligent learning coordinator (Boss Agent) with advanced meta-learning capabilities and conversational tutoring tools.
 
 USER LEARNING CONTEXT:
 {json.dumps(reasoning_context, indent=2)}
@@ -130,34 +140,112 @@ META-LEARNING INSIGHTS:
 AVAILABLE CONTENT:
 {combined_text_with_images[:500]}...
 
-ENHANCED ROUTING RULES:
-- Use meta-learning recommendations as primary guidance
-- Score < 40%: Quiz Agent (basics/fundamentals)
-- Score 40-59%: Quiz Agent (review/standard)
-- Score 60-79%: Teaching Agent (Feynman technique)
-- Score 80%+: Teaching Agent (mastery confirmation)
+CONVERSATIONAL TUTORING TOOLS:
+{tool_descriptions}
 
-Consider the meta-learning insights about agent effectiveness and user patterns when making decisions.
+COMPREHENSIVE ROUTING LOGIC:
+1. TRADITIONAL AGENT ROUTING (based on performance scores):
+   - Score < 40%: Quiz Agent (basics/fundamentals)
+   - Score 40-59%: Quiz Agent (review/standard)
+   - Score 60-79%: Teaching Agent (Feynman technique)
+   - Score 80%+: Teaching Agent (mastery confirmation)
+
+2. CONVERSATIONAL TUTORING ROUTING (for confusion/knowledge gaps):
+   - User shows confusion signals ("I don't know", "I'm confused")
+   - Fundamental knowledge gaps detected
+   - Multiple failed attempts on basic concepts
+   - Meta-learning indicates need for personalized step-by-step guidance
+
+3. TOOL-ENHANCED DECISION MAKING:
+   - refine_explanation: For unclear concepts needing iterative refinement
+   - micro_lesson_generator: For missing prerequisite knowledge
+   - generate_leading_question: For guided discovery and Socratic learning
+
+ENHANCED DECISION FRAMEWORK:
+- Use meta-learning recommendations as primary guidance for agent effectiveness
+- Consider conversation history and confusion patterns
+- Leverage tool capabilities for personalized learning paths
+- Integrate traditional scoring with advanced tutoring methods
+- Prioritize conversational tutoring when standard agents show limited effectiveness
+
+CONTEXT ANALYSIS PRIORITIES:
+1. Analyze user's emotional state and confidence level
+2. Review meta-learning insights about effective teaching methods for this user
+3. Consider knowledge gaps and prerequisite mastery
+4. Evaluate if conversational tools would provide better learning outcomes
+5. Balance efficiency (traditional agents) vs. depth (conversational tutoring)
 
 Respond with ONLY valid JSON:
 {{
-    "reasoning": "Your step-by-step thinking incorporating meta-learning insights",
+    "reasoning": "Your comprehensive step-by-step thinking incorporating meta-learning insights, user context, and tool capabilities",
     "recommended_topic": "specific_topic_name_from_available_topics",
-    "recommended_agent": "quiz_agent|teaching_agent",
-    "learning_strategy": "review|sequential|advanced|basics|teaching",
+    "recommended_agent": "quiz_agent|teaching_agent|conversational_tutor",
+    "conversational_tutoring_recommended": true/false,
+    "recommended_tools": ["tool_name1", "tool_name2"] or null,
+    "learning_strategy": "review|sequential|advanced|basics|teaching|conversational|socratic",
     "confidence": 0.95,
     "expected_difficulty": "easy|medium|hard",
-    "session_recommendation": "quick|standard|extended",
-    "meta_learning_applied": true
+    "session_recommendation": "quick|standard|extended|conversational",
+    "meta_learning_applied": true,
+    "reasoning_for_conversational": "explanation if conversational tutoring recommended",
+    "fallback_agent": "quiz_agent|teaching_agent",
+    "estimated_session_duration": "5-10min|10-20min|20-30min|flexible"
 }}
 """
+# unified_reasoning_prompt = f"""
+# You are a Boss Agent coordinating learning with meta-learning insights and tutoring tools.
+
+# USER CONTEXT:
+# {json.dumps(reasoning_context, indent=2)}
+
+# META-LEARNING:
+# {json.dumps(topic_recommendations, indent=2)}
+
+# CONTENT PREVIEW:
+# {combined_text_with_images[:500]}...
+
+# TOOLS:
+# {tool_descriptions}
+
+# ROUTING RULES:
+# - Score <40% → Quiz Agent (basics)
+# - 40–59% → Quiz Agent (review)
+# - 60–79% → Teaching Agent (Feynman)
+# - 80%+ → Teaching Agent (mastery)
+# - Switch to Conversational Tutor if: confusion signals, repeated failures, or missing prerequisites
+# - Tools: refine_explanation (clarify), micro_lesson_generator (fill gaps), generate_leading_question (Socratic)
+
+# OUTPUT JSON ONLY (no extra text).  
+# Defaults if unsure.  
+# Confidence ∈ [0.6,1.0].  
+# Tools = array or null.  
+# Duration ∈ {{"5-10min","10-20min","20-30min","flexible"}}.
+
+# JSON FORMAT:
+# {{
+#   "reasoning": "...",
+#   "recommended_topic": "...",
+#   "recommended_agent": "quiz_agent|teaching_agent|conversational_tutor",
+#   "conversational_tutoring_recommended": true/false,
+#   "recommended_tools": ["..."] or null,
+#   "learning_strategy": "review|sequential|advanced|basics|teaching|conversational|socratic",
+#   "confidence": 0.6-1.0,
+#   "expected_difficulty": "easy|medium|hard",
+#   "session_recommendation": "quick|standard|extended|conversational",
+#   "meta_learning_applied": true/false,
+#   "reasoning_for_conversational": "..." or null,
+#   "fallback_agent": "quiz_agent|teaching_agent",
+#   "estimated_session_duration": "5-10min|10-20min|20-30min|flexible"
+# }}
+# """
+
 
     try:
         client = Groq(api_key=os.getenv("GROQ_API_KEY"))
         
         # CHANGED: Use text-only content, larger model
         response = client.chat.completions.create(
-            messages=[{"role": "user", "content": reasoning_prompt}],
+            messages=[{"role": "user", "content": unified_reasoning_prompt}],
             model="llama-3.3-70b-versatile",  # Use larger text-only model
             max_tokens=600,
             temperature=0.3
