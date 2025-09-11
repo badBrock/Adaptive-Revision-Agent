@@ -1,4 +1,5 @@
 # import os
+import asyncio
 import json
 from typing import Dict, Any, Optional
 import logging
@@ -6,6 +7,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 import os
+
 # LangSmith imports
 from langsmith import traceable, Client as LangSmithClient
 from langsmith.run_helpers import get_current_run_tree
@@ -82,19 +84,20 @@ tracker = SessionTracker()
 @traceable(
     name="complete_tutoring_workflow",
     run_type="chain", 
-    tags=["multi-agent", "adaptive-learning", "meta-learning"],
-    metadata={"system": "adaptive-tutoring", "version": "2.0"}
+    tags=["multi-agent", "adaptive-learning", "meta-learning", "async-mcp"],
+    metadata={"system": "adaptive-tutoring", "version": "3.0-async"}
 )
-def run_integrated_learning_system(user_id: str, content_folder_path: str) -> Dict[str, Any]:
+async def run_integrated_learning_system(user_id: str, content_folder_path: str) -> Dict[str, Any]:
     """
-    Complete integrated learning system workflow with meta-learning and LangSmith tracing:
+    Complete ASYNC integrated learning system workflow with MCP + meta-learning + LangSmith tracing:
     Boss Agent → Quiz Agent OR Teaching Agent → Meta-Learning Update → Boss Agent (with results)
     """
-    print(f"\n🤖 INTEGRATED LEARNING SYSTEM WITH META-LEARNING + LANGSMITH")
+    print(f"\n🤖 ASYNC INTEGRATED LEARNING SYSTEM WITH MCP + META-LEARNING + LANGSMITH")
     print(f"="*75)
     print(f"👤 User: {user_id}")
     print(f"📁 Content: {content_folder_path}")
     print(f"🔍 Session ID: {tracker.session_id}")
+    print(f"⚡ Mode: ASYNC + MCP")
     print(f"="*75)
     
     # Initialize meta-learning module
@@ -107,12 +110,13 @@ def run_integrated_learning_system(user_id: str, content_folder_path: str) -> Di
             "session_id": tracker.session_id,
             "user_id": user_id,
             "content_folder": content_folder_path,
-            "start_time": datetime.now().isoformat()
+            "start_time": datetime.now().isoformat(),
+            "mode": "async_mcp"
         })
     
     try:
-        # Step 1: Boss Agent Decision Making
-        boss_result = execute_boss_agent_step(user_id, content_folder_path)
+        # Step 1: Boss Agent Decision Making (ASYNC)
+        boss_result = await execute_boss_agent_step(user_id, content_folder_path)
         
         if boss_result.get('status') != 'success':
             return handle_boss_agent_failure(boss_result)
@@ -132,8 +136,8 @@ def run_integrated_learning_system(user_id: str, content_folder_path: str) -> Di
         # Show pre-session meta-learning insights
         show_pre_session_insights(meta_module, user_id, recommended_topic)
         
-        # Step 2: Execute Selected Agent
-        agent_result, agent_type, session_duration = execute_selected_agent(
+        # Step 2: Execute Selected Agent (ASYNC)
+        agent_result, agent_type, session_duration = await execute_selected_agent(
             recommended_agent, user_id, recommended_topic
         )
         
@@ -155,8 +159,8 @@ def run_integrated_learning_system(user_id: str, content_folder_path: str) -> Di
             meta_module, user_id, recommended_topic, recommended_agent
         )
         
-        # Step 5: Update Progress
-        final_boss_result, overall_progress = update_learning_progress(
+        # Step 5: Update Progress (ASYNC)
+        final_boss_result, overall_progress = await update_learning_progress(
             user_id, content_folder_path, agent_result, agent_type
         )
         
@@ -185,16 +189,26 @@ def run_integrated_learning_system(user_id: str, content_folder_path: str) -> Di
 @traceable(
     name="boss_agent_routing_decision",
     run_type="llm",
-    tags=["routing", "decision-making", "boss-agent"]
+    tags=["routing", "decision-making", "boss-agent", "async"]
 )
-def execute_boss_agent_step(user_id: str, content_folder_path: str) -> Dict[str, Any]:
-    """Execute Boss Agent routing decision with tracing"""
-    print(f"\n🧠 STEP 1: Boss Agent Decision Making...")
+async def execute_boss_agent_step(user_id: str, content_folder_path: str) -> Dict[str, Any]:
+    """Execute Boss Agent routing decision with tracing (ASYNC)"""
+    print(f"\n🧠 STEP 1: Boss Agent Decision Making (ASYNC)...")
     
     start_time = time.time()
     
+    # Import boss agent with async support
     from boss_agent import run_boss_agent_session
-    boss_result = run_boss_agent_session(user_id, content_folder_path, quiz_results=None)
+    
+    # 🔧 KEY CHANGE: Check if boss agent is async, if not run in executor
+    try:
+        # Try async first
+        boss_result = await run_boss_agent_session(user_id, content_folder_path, quiz_results=None)
+    except TypeError:
+        # Fallback to sync version in executor
+        boss_result = await asyncio.to_thread(
+            run_boss_agent_session, user_id, content_folder_path, None
+        )
     
     end_time = time.time()
     duration = end_time - start_time
@@ -208,7 +222,8 @@ def execute_boss_agent_step(user_id: str, content_folder_path: str) -> Dict[str,
         current_run.add_metadata({
             "routing_decision": boss_result.get('decision', {}),
             "session_status": boss_result.get('session_status'),
-            "duration": duration
+            "duration": duration,
+            "async_mode": True
         })
     
     if boss_result.get('session_status') in ['error', 'workflow_error']:
@@ -219,22 +234,40 @@ def execute_boss_agent_step(user_id: str, content_folder_path: str) -> Dict[str,
 @traceable(
     name="learning_agent_execution", 
     run_type="chain",
-    tags=["quiz-agent", "teaching-agent", "learning"]
+    tags=["quiz-agent", "teaching-agent", "learning", "async-mcp"]
 )
-def execute_selected_agent(recommended_agent: str, user_id: str, recommended_topic: str):
-    """Execute the selected learning agent with tracing"""
+async def execute_selected_agent(recommended_agent: str, user_id: str, recommended_topic: str):
+    """Execute the selected learning agent with tracing (ASYNC + MCP)"""
     
     session_start_time = time.time()
     
     if recommended_agent == 'teaching_agent':
-        print(f"\n🎓 STEP 2: Teaching Agent Session...")
+        print(f"\n🎓 STEP 2: Teaching Agent Session (ASYNC + MCP)...")
         from teaching_agent import run_teaching_agent_session
-        agent_result = run_teaching_agent_session(user_id, recommended_topic)
+        
+        try:
+            # Try async MCP-enabled version first
+            agent_result = await run_teaching_agent_session(user_id, recommended_topic)
+        except TypeError:
+            # Fallback to sync version in executor
+            agent_result = await asyncio.to_thread(
+                run_teaching_agent_session, user_id, recommended_topic
+            )
+        
         agent_type = "Teaching Agent"
     else:
-        print(f"\n🎯 STEP 2: Quiz Agent Session...")  
+        print(f"\n🎯 STEP 2: Quiz Agent Session (ASYNC + MCP)...")  
         from quiz_agent import run_quiz_agent_session
-        agent_result = run_quiz_agent_session(user_id, recommended_topic)
+        
+        try:
+            # Try async MCP-enabled version first  
+            agent_result = await run_quiz_agent_session(user_id, recommended_topic)
+        except TypeError:
+            # Fallback to sync version in executor
+            agent_result = await asyncio.to_thread(
+                run_quiz_agent_session, user_id, recommended_topic
+            )
+        
         agent_type = "Quiz Agent"
     
     session_end_time = time.time()
@@ -251,7 +284,9 @@ def execute_selected_agent(recommended_agent: str, user_id: str, recommended_top
             "questions_answered": agent_result.get('questions_answered', 0),
             "average_score": agent_result.get('average_score', 0),
             "grade": agent_result.get('grade', ''),
-            "session_duration": session_duration
+            "session_duration": session_duration,
+            "async_mode": True,
+            "mcp_enabled": True
         })
     
     return agent_result, agent_type, session_duration
@@ -289,7 +324,9 @@ def record_meta_learning_data(meta_module, user_id, recommended_topic, recommend
             "feedback_rating": 4,
             "agent_used": recommended_agent,
             "difficulty_level": decision.get('expected_difficulty', 'medium'),
-            "learning_strategy": decision.get('learning_strategy', 'unknown')
+            "learning_strategy": decision.get('learning_strategy', 'unknown'),
+            "async_mode": True,
+            "mcp_enabled": True
         }
         
         # Record to meta-learning system
@@ -304,7 +341,8 @@ def record_meta_learning_data(meta_module, user_id, recommended_topic, recommend
                 "meta_learning_data": {
                     "mistakes_count": len(mistakes),
                     "mistake_types": list(set([m["type"] for m in mistakes])),
-                    "session_outcome": session_outcome
+                    "session_outcome": session_outcome,
+                    "async_mode": True
                 }
             })
         
@@ -369,18 +407,26 @@ def show_post_session_insights(meta_module, user_id, recommended_topic, recommen
 @traceable(
     name="progress_update",
     run_type="tool",
-    tags=["state-management", "progress-tracking"]  
+    tags=["state-management", "progress-tracking", "async"]  
 )
-def update_learning_progress(user_id, content_folder_path, agent_result, agent_type):
-    """Update learning progress with tracing"""
-    print(f"\n📊 STEP 5: Updating Boss Agent with {agent_type} Results...")
+async def update_learning_progress(user_id, content_folder_path, agent_result, agent_type):
+    """Update learning progress with tracing (ASYNC)"""
+    print(f"\n📊 STEP 5: Updating Boss Agent with {agent_type} Results (ASYNC)...")
     
     start_time = time.time()
     
     from boss_agent import run_boss_agent_session
-    final_boss_result = run_boss_agent_session(
-        user_id, content_folder_path, quiz_results=agent_result
-    )
+    
+    try:
+        # Try async version first
+        final_boss_result = await run_boss_agent_session(
+            user_id, content_folder_path, quiz_results=agent_result
+        )
+    except TypeError:
+        # Fallback to sync version in executor
+        final_boss_result = await asyncio.to_thread(
+            run_boss_agent_session, user_id, content_folder_path, agent_result
+        )
     
     end_time = time.time()
     duration = end_time - start_time
@@ -413,7 +459,9 @@ def log_session_metrics_to_langsmith(user_id, recommended_topic, agent_type,
                 "grade": agent_result['grade'],
                 "questions_answered": agent_result['questions_answered'],
                 "session_duration": session_duration,
-                "learning_strategy": decision.get('learning_strategy')
+                "learning_strategy": decision.get('learning_strategy'),
+                "async_mode": True,
+                "mcp_enabled": True
             },
             "performance_metrics": {
                 "total_tokens": tracker.total_tokens,
@@ -429,12 +477,14 @@ def log_session_metrics_to_langsmith(user_id, recommended_topic, agent_type,
     print(f"🪙 Total Tokens: {tracker.total_tokens:,}")
     print(f"💰 Estimated Cost: ${tracker.total_cost:.4f}")
     print(f"⏱️  Session Duration: {session_duration:.1f}s")
+    print(f"⚡ Async Mode: Enabled")
+    print(f"🔗 MCP Integration: Active")
     print(f"🔗 View traces at: https://smith.langchain.com")
 
 def display_final_summary(recommended_topic, agent_type, agent_result, 
                         overall_progress, session_duration, post_insights):
     """Display final session summary"""
-    print(f"\n🎉 ENHANCED LEARNING SESSION COMPLETE!")
+    print(f"\n🎉 ASYNC + MCP LEARNING SESSION COMPLETE!")
     print(f"="*75)
     print(f"📚 Topic Studied: {recommended_topic}")
     print(f"🤖 Agent Used: {agent_type}")
@@ -445,10 +495,12 @@ def display_final_summary(recommended_topic, agent_type, agent_result,
     print(f"💡 Recommendation: {agent_result['recommendation']}")
     print(f"🧠 Meta-Learning: {'Active' if post_insights else 'Initializing'}")
     print(f"⏱️ Session Duration: {session_duration:.1f} seconds")
+    print(f"⚡ Async Mode: Enabled")
+    print(f"🔗 MCP Integration: Active")
     print(f"🔍 LangSmith Session: {tracker.session_id}")
     print(f"="*75)
 
-# Helper functions for error handling
+# Helper functions for error handling (unchanged)
 def handle_boss_agent_failure(boss_result):
     print(f"❌ Boss Agent failed: {boss_result.get('error_message', 'Unknown error')}")
     return {
@@ -507,7 +559,9 @@ def build_success_response(user_id, recommended_topic, agent_type, decision, age
             "meta_learning_active": True,
             "langsmith_session_id": tracker.session_id,
             "total_tokens": tracker.total_tokens,
-            "estimated_cost": tracker.total_cost
+            "estimated_cost": tracker.total_cost,
+            "async_mode": True,
+            "mcp_enabled": True
         },
         "boss_decision": decision,
         "agent_results": agent_result,
@@ -538,12 +592,13 @@ def classify_mistake_type(qa_entry: Dict[str, Any]) -> str:
     else:
         return 'general_error'
 
-def main():
-    """Main function with user input"""
-    print("🎓 Enhanced Integrated Learning System - Boss Agent + Quiz/Teaching Agents + Meta-Learning + LangSmith")
+async def main():
+    """ASYNC Main function with user input"""
+    print("🎓 ASYNC MCP-Enhanced Integrated Learning System")
+    print("Boss Agent + Quiz/Teaching Agents + Meta-Learning + LangSmith + MCP")
     print("="*100)
     
-    # Get user input
+    # Get user input (these remain synchronous)
     try:
         user_id = input("Enter User ID: ").strip() or "student_001"
         content_folder = input("Enter content folder path: ").strip() or "./content"
@@ -557,12 +612,12 @@ def main():
         print("Please create the folder and add some .md files for learning content.")
         return
     
-    # Run integrated system
-    result = run_integrated_learning_system(user_id, content_folder)
+    # 🔧 KEY CHANGE: AWAIT the async integrated system
+    result = await run_integrated_learning_system(user_id, content_folder)
     
     # Handle different outcomes
     if result["status"] == "success":
-        print(f"\n✅ Enhanced integration with LangSmith completed successfully!")
+        print(f"\n✅ ASYNC MCP-enhanced integration completed successfully!")
         
         # Show LangSmith metrics
         langsmith_metrics = result.get('langsmith_metrics', {})
@@ -572,6 +627,8 @@ def main():
             print(f"🪙 Total Tokens Used: {langsmith_metrics.get('total_tokens', 0):,}")
             print(f"💰 Estimated Cost: ${langsmith_metrics.get('total_cost', 0):.4f}")
             print(f"📞 API Calls Made: {len(langsmith_metrics.get('agent_calls', []))}")
+            print(f"⚡ Async Mode: Enabled")
+            print(f"🔗 MCP Integration: Active")
             print(f"🔗 View detailed traces at: https://smith.langchain.com")
         
         # Show meta-learning summary
@@ -594,7 +651,7 @@ def main():
                 # Reset tracker for new session
                 global tracker
                 tracker = SessionTracker()
-                main()  # Recursive call for another session
+                await main()  # 🔧 KEY CHANGE: AWAIT recursive call
         except KeyboardInterrupt:
             print("\n👋 Goodbye!")
     else:
@@ -610,4 +667,5 @@ def main():
                 print(f"Agent Type: {result['agent_type']}")
 
 if __name__ == "__main__":
-    main()
+    # 🔧 KEY CHANGE: Use asyncio.run() for async main
+    asyncio.run(main())

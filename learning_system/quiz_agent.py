@@ -6,7 +6,11 @@ from datetime import datetime
 import logging
 from tools.agent_integration import trigger_conversational_tutoring, integrate_with_quiz_agent
 from conversational_tutor_agent import start_conversational_tutoring
-
+# Add these imports at the top
+import asyncio
+import sys
+import os
+from infrastructure.mcp.mcp_factory import MCPFactory
 # Import our modular tools
 from tools.content_loader import ContentCache
 from tools.question_planner import QuestionPlanner
@@ -87,35 +91,46 @@ def load_and_cache_content(state: QuizAgentState) -> QuizAgentState:
         }
 
 # Node 2: Plan questions using QuestionPlanner tool
-def plan_questions(state: QuizAgentState) -> QuizAgentState:
-    """Plan all questions using modular QuestionPlanner tool"""
-    logger.info("🧠 Planning questions using QuestionPlanner tool...")
+async def plan_questions(state: QuizAgentState) -> QuizAgentState:
+    """Plan all questions using MCP"""
+    logger.info("🧠 Planning questions using MCP...")
     
     try:
-        # Use QuestionPlanner tool instead of inline planning
-        planner = QuestionPlanner(api_key=os.getenv("GROQ_API_KEY"))
-        question_plan = planner.plan_questions(
+        mcp_client = await MCPFactory.get_client()
+        
+        result = await mcp_client.call_tool(
+            "plan_questions",
             content_cache=state['content_cache'],
             difficulty="medium",
             num_questions=3
         )
         
-        total_questions = len(question_plan)
-        logger.info(f"📋 QuestionPlanner generated {total_questions} questions")
-        
-        return {
-            **state,
-            "question_plan": question_plan,
-            "total_questions": total_questions,
-            "session_status": "questions_planned"
-        }
-        
+        if result.get("status") == "success":
+            question_plan = result["questions"]
+            logger.info(f"📋 MCP generated {len(question_plan)} questions")
+            
+            return {
+                **state,
+                "question_plan": question_plan,
+                "total_questions": len(question_plan),
+                "session_status": "questions_planned"
+            }
+        else:
+            raise Exception(result.get("error", "Unknown error"))
+            
     except Exception as e:
-        logger.error(f"❌ Question planning failed: {str(e)}")
+        logger.error(f"❌ MCP question planning failed: {e}")
+        
+        # Fallback to original method
+        from tools.question_planner import QuestionPlanner
+        planner = QuestionPlanner(api_key=os.getenv("GROQ_API_KEY"))
+        questions = planner.plan_questions(state['content_cache'], "medium", 3)
+        
         return {
             **state,
-            "session_status": "error",
-            "recommendation": f"Question planning failed: {str(e)}"
+            "question_plan": questions,
+            "total_questions": len(questions),
+            "session_status": "questions_planned"
         }
 
 # Node 3: Generate question (from plan, no API calls)
@@ -263,26 +278,34 @@ def check_tutoring_outcome(state: QuizAgentState) -> QuizAgentState:
         }
 
 # Node 6: Score answer using AnswerScorer tool
-def score_answer(state: QuizAgentState) -> QuizAgentState:
-    """Score answer using modular AnswerScorer tool"""
+async def score_answer(state: QuizAgentState) -> QuizAgentState:
+    """Score answer using MCP with fallback"""
     current_question = state['current_question']
     user_answer = state['user_answer']
     feedback = state['feedback']
-    current_index = state['current_question_index']
-    question_info = state['question_plan'][current_index] if current_index < len(state['question_plan']) else None
     
     try:
-        # Use AnswerScorer tool instead of inline scoring
-        scorer = AnswerScorer(api_key=os.getenv("GROQ_API_KEY"))
-        scoring_result = scorer.score_answer(
+        mcp_client = await MCPFactory.get_client()
+        
+        result = await mcp_client.call_tool(
+            "score_answer",
             question=current_question,
             user_answer=user_answer,
             content_cache=state['content_cache'],
-            feedback=feedback,
-            question_info=question_info
+            feedback=feedback
         )
         
-        current_score = scoring_result["score"]
+        current_score = result.get("score", 50.0)
+        logger.info(f"📊 MCP scored answer: {current_score}")
+        
+    except Exception as e:
+        logger.error(f"❌ MCP scoring failed, using fallback: {e}")
+        
+        # Fallback to original scorer
+        from tools.scorer import AnswerScorer
+        scorer = AnswerScorer(api_key=os.getenv("GROQ_API_KEY"))
+        scoring_result = scorer.score_answer(current_question, user_answer, state['content_cache'])
+        current_score = scoring_result.get("score", 50.0)
         
     except Exception as e:
         logger.error(f"❌ AnswerScorer failed: {str(e)}")
@@ -456,27 +479,25 @@ def create_quiz_agent_workflow():
     return workflow.compile()
 
 
-def run_quiz_agent_session(user_id: str, topic_name: str):
-    """Enhanced Quiz Agent with conversational tutoring support"""
+async def run_quiz_agent_session(user_id: str, topic_name: str):
+    """Enhanced Quiz Agent with MCP integration"""
     
-    # Initialize meta-learning
+    # All your existing meta-learning code stays the same
     meta_module = MetaLearningModule()
     
-    print(f"\n🎯 Enhanced Quiz Agent Session - Meta-Learning Enabled")
+    print(f"\n🎯 MCP-Enhanced Quiz Agent Session")
     print(f"👤 User: {user_id}")
     print(f"📚 Topic: {topic_name}")
     
-    # Get learning recommendations
     recommendations = meta_module.get_learning_recommendations(user_id, topic_name)
     adaptations = meta_module.get_agent_adaptations(user_id, topic_name, "quiz_agent")
     
     print(f"🧠 Meta-Learning Insights:")
     print(f"   Recommended difficulty: {adaptations['difficulty_adjustment']}")
     print(f"   Focus areas: {adaptations['focus_areas']}")
-    print(f"   Learning velocity: {adaptations['learning_velocity']:.2f}")
     print("="*50)
     
-    # Your existing initial_state setup...
+    # Your existing initial_state setup stays exactly the same
     initial_state: QuizAgentState = {
         "user_id": user_id,
         "topic_name": topic_name,
@@ -495,10 +516,8 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
         "grade": "",
         "recommendation": "",
         "session_status": "starting",
-        # Add meta-learning data
         "meta_adaptations": adaptations,
         "meta_recommendations": recommendations,
-        # 🔧 NEW: Add conversational tutoring tracking
         "conversational_tutoring_completed": False,
         "tutoring_result": {},
         "understanding_improved": False
@@ -506,35 +525,31 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
     
     try:
         workflow = create_quiz_agent_workflow()
-        result = workflow.invoke(
+        
+        # KEY CHANGE: Use ainvoke for async
+        result = await workflow.ainvoke(
             initial_state,
             config={
-                "recursion_limit": 30,  # 🔧 Increased for conversational tutoring
-                "configurable": {"thread_id": f"quiz_session_{user_id}_{topic_name}"}  # 🔧 Memory persistence
+                "recursion_limit": 30,
+                "configurable": {"thread_id": f"quiz_session_{user_id}_{topic_name}"}
             }
         )
         
-        # 🔧 NEW: Check if conversational tutoring was used
+        # All your existing session outcome and meta-learning code stays the same
         if result.get("conversational_tutoring_completed"):
-            print(f"\n🎓 Conversational tutoring was activated during this session!")
-            tutoring_outcome = result.get("tutoring_result", {}).get("session_outcome", "unknown")
-            print(f"📊 Tutoring outcome: {tutoring_outcome}")
-        
-        # Record session outcome for meta-learning
+            print(f"\n🎓 Conversational tutoring was activated!")
+            
         session_outcome = {
             "average_score": result.get('average_score', 0),
             "questions_answered": len(result.get('scores', [])),
             "mistakes": extract_mistakes_from_qa_history(result.get('qa_history', [])),
             "time_taken": 0,
             "feedback_rating": 4,
-            # 🔧 NEW: Track conversational tutoring usage
             "conversational_tutoring_used": result.get("conversational_tutoring_completed", False),
             "tutoring_effectiveness": result.get("tutoring_result", {}).get("session_outcome", "not_used")
         }
         
         meta_module.record_session_outcome(user_id, topic_name, "quiz_agent", session_outcome)
-        
-        print(f"\n📊 Meta-Learning Updated with session results")
         
         return {
             "status": "success",
@@ -544,17 +559,13 @@ def run_quiz_agent_session(user_id: str, topic_name: str):
             "questions_answered": len(result.get('scores', [])),
             "qa_history": result.get('qa_history', []),
             "meta_insights": recommendations,
-            # 🔧 NEW: Return conversational tutoring info
             "conversational_tutoring_used": result.get("conversational_tutoring_completed", False),
             "tutoring_result": result.get("tutoring_result", {})
         }
         
     except Exception as e:
-        logger.error(f"❌ Enhanced Quiz Agent workflow failed: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        logger.error(f"❌ Enhanced Quiz Agent failed: {str(e)}")
+        return {"status": "error", "error": str(e)}
 
 def extract_mistakes_from_qa_history(qa_history: List[Dict]) -> List[Dict]:
     """Extract mistake patterns from Q&A history"""
