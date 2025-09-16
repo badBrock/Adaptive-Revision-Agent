@@ -148,10 +148,8 @@ def generate_question(state: QuizAgentState) -> QuizAgentState:
 # Node 4: Collect one-word answer (same as before)
 def collect_one_word_answer(state: QuizAgentState) -> QuizAgentState:
     """Enhanced to detect confusion and trigger conversational tutoring"""
-    
-    
     user_answer = input("👤 Your answer: ").strip()
-    
+
     # 🔧 NEW: Check for confusion signals
     if trigger_conversational_tutoring(user_answer, state):
         logger.info(f"🎓 Confusion detected: '{user_answer}' - Starting conversational tutoring")
@@ -159,7 +157,7 @@ def collect_one_word_answer(state: QuizAgentState) -> QuizAgentState:
         # Trigger conversational tutoring
         tutoring_result = start_conversational_tutoring(
             user_id=state['user_id'],
-            topic=state['topic_name'], 
+            topic=state['topic_name'],
             entry_context={
                 "from_agent": "quiz_agent",
                 "failed_question": state['current_question'],
@@ -178,16 +176,19 @@ def collect_one_word_answer(state: QuizAgentState) -> QuizAgentState:
             "conversational_tutoring_completed": True,
             "tutoring_result": tutoring_result,
             "understanding_improved": tutoring_result.get("session_outcome") in ["mastery_achieved", "good_progress"],
+            "user_answer": user_answer,  # 🔧 KEEP THE ORIGINAL ANSWER!
             "session_status": "conversational_tutoring_complete"
         }
-    
-    # Normal quiz flow if no confusion
+
+    # Normal quiz flow if no confusion - 🔧 THIS IS THE IMPORTANT PART!
     logger.info(f"📝 User answered: '{user_answer}'")
     return {
         **state,
         "user_answer": user_answer,
+        "conversational_tutoring_completed": False,  # 🔧 EXPLICITLY SET TO FALSE
         "session_status": "answer_collected"
     }
+
 # Node 5: Provide feedback using cached content
 def provide_feedback(state: QuizAgentState) -> QuizAgentState:
     """Provide feedback using cached content (no re-sending)"""
@@ -421,7 +422,7 @@ def create_quiz_agent_workflow():
     # Conditional edge for conversational tutoring
     workflow.add_conditional_edges(
         "collect_one_word_answer",
-        lambda state: "tutoring_complete" if state.get("conversational_tutoring_completed") else "continue_quiz",
+        lambda state: "tutoring_complete" if state.get("conversational_tutoring_completed", False) else "continue_quiz",
         {
             "tutoring_complete": "check_tutoring_outcome",
             "continue_quiz": "provide_feedback"
