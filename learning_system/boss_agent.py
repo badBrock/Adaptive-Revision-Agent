@@ -54,12 +54,19 @@ def initialize_boss_agent(state: BossAgentState) -> BossAgentState:
 
 # Node 2: Discover content using ContentCache tool
 def discover_content(state: BossAgentState) -> BossAgentState:
-    """Discover content using modular ContentCache tool"""
+    """Enhanced content discovery supporting image-only scenarios"""
     logger.info(f"🔍 Discovering content using ContentCache...")
     
     try:
-        # Use ContentCache tool instead of inline content discovery
+        # Use ContentCache tool to load content
         content_cache = ContentCache.load_content_cache(state['content_folder_path'])
+        
+        # Check if we have documents or need to create topics from images
+        if not content_cache.get("documents") and content_cache.get("images"):
+            logger.info("📸 No documents found, creating topics from images...")
+            content_cache = create_topics_from_images(content_cache)
+        elif not content_cache.get("documents") and not content_cache.get("images"):
+            raise ValueError("No content found - neither documents nor images")
         
         # Get summary for logging
         summary = ContentCache.get_content_summary(content_cache)
@@ -78,6 +85,49 @@ def discover_content(state: BossAgentState) -> BossAgentState:
             "session_status": "error",
             "error_message": f"Content discovery failed: {str(e)}"
         }
+
+def create_topics_from_images(content_cache: Dict) -> Dict:
+    """Create synthetic document topics from image content"""
+    import os
+    from datetime import datetime
+    
+    # Create synthetic documents from images
+    synthetic_documents = []
+    
+    for i, image in enumerate(content_cache.get("images", [])):
+        # Extract topic name from image filename or description
+        filename = os.path.basename(image.get("path", f"image_{i}"))
+        topic_name = filename.split('.')[0].replace('_', ' ').replace('-', ' ').title()
+        
+        # Use image description as content if available
+        image_description = image.get("description", f"Visual content from {filename}")
+        
+        # Create a synthetic document entry
+        synthetic_doc = {
+            "topic_name": topic_name,
+            "filepath": image.get("path"),  # Use image path as filepath
+            "markdown": f"# {topic_name}\n\n{image_description}",  # Create markdown from description
+            "word_count": len(image_description.split()),
+            "content_preview": image_description[:200],
+            "content_type": "image_based",
+            "image_count": 1,
+            "filename": filename
+        }
+        
+        synthetic_documents.append(synthetic_doc)
+    
+    # Update content cache with synthetic documents
+    content_cache["documents"] = synthetic_documents
+    
+    # Create combined content that includes image descriptions
+    combined_content = []
+    for doc in synthetic_documents:
+        combined_content.append(f"**{doc['topic_name']}**\n{doc['markdown']}")
+    
+    content_cache["combined_text"] = "\n\n".join(combined_content)
+    
+    logger.info(f"✅ Created {len(synthetic_documents)} topics from images")
+    return content_cache
 
 # Add to the top of your boss_agent.py file
 
@@ -368,7 +418,7 @@ def validate_and_correct_routing(decision: Dict[str, Any], topic_scores: Dict, m
 
 # Node 4: Execute action using StateManager
 def execute_action(state: BossAgentState) -> BossAgentState:
-    """Execute action using StateManager for session creation"""
+    """Enhanced action execution supporting image-based content"""
     logger.info("⚡ Executing action...")
     
     decision = state['decision']
@@ -396,18 +446,21 @@ def execute_action(state: BossAgentState) -> BossAgentState:
             "error_message": f"Topic '{recommended_topic}' not found in content"
         }
 
-    # Prepare session data for Quiz Agent
+    # Enhanced session config for image-based content
     quiz_session_config = {
-        "md_file_path": topic_info["filepath"],
+        "md_file_path": topic_info.get("filepath"),  # Could be image path
         "image_paths": [img["path"] for img in content_cache["images"]],
         "learning_strategy": decision.get("learning_strategy"),
         "expected_difficulty": decision.get("expected_difficulty"),
         "session_recommendation": decision.get("session_recommendation"),
-        "word_count": topic_info["word_count"],
-        "boss_agent_reasoning": decision.get("reasoning")
+        "word_count": topic_info.get("word_count", 0),
+        "boss_agent_reasoning": decision.get("reasoning"),
+        "content_type": topic_info.get("content_type", "document"),  # Track content type
+        "image_descriptions": [img.get("description") for img in content_cache["images"]],
+        "combined_content": content_cache.get("combined_text", ""),
+        "synthetic_content": topic_info.get("content_type") == "image_based"  # Flag for synthetic content
     }
     
-    # Use StateManager to create quiz session
     try:
         state_manager = StateManager()
         session_file_path = state_manager.create_quiz_session(
@@ -420,7 +473,8 @@ def execute_action(state: BossAgentState) -> BossAgentState:
             "action": "route_to_quiz_agent",
             "topic": recommended_topic,
             "session_file": session_file_path,
-            "status": "success"
+            "status": "success",
+            "content_type": topic_info.get("content_type", "document")
         }
         
         return {

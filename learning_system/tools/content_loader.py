@@ -44,22 +44,21 @@ class ContentCache:
             logger.error(f"❌ Error encoding image {image_path}: {str(e)}")
             return None
 
+    
     @staticmethod
     def load_content_cache(folder_path: str) -> Dict[str, Any]:
-        """Load all content from folder and return cached data structure"""
+        """Enhanced content cache loading with better image handling"""
         if not os.path.exists(folder_path):
             raise ValueError(f"Folder path does not exist: {folder_path}")
-        
         if not os.path.isdir(folder_path):
             raise ValueError(f"Path is not a directory: {folder_path}")
 
         # Discover markdown files
         documents = []
         all_image_paths = []
-        
         md_files = list(Path(folder_path).glob("**/*.md"))
         image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
-        
+
         for md_file in md_files:
             try:
                 with open(md_file, 'r', encoding='utf-8') as f:
@@ -74,19 +73,19 @@ class ContentCache:
                     "filepath": str(md_file),
                     "markdown": md_content,
                     "word_count": len(md_content.split()),
-                    "topic_name": md_file.stem
+                    "topic_name": md_file.stem,
+                    "content_type": "document"  # Mark as regular document
                 })
-                
             except Exception as e:
                 logger.warning(f"Could not load {md_file}: {str(e)}")
-        
+
         # Find ALL images in folder (not just referenced ones)
         for file_path in Path(folder_path).rglob("*"):
             if file_path.suffix.lower() in image_extensions:
                 abs_path = str(file_path.absolute())
                 if abs_path not in all_image_paths:
                     all_image_paths.append(abs_path)
-        
+
         # Pre-encode ALL images to base64 (ONCE)
         encoded_images = []
         for img_path in all_image_paths:
@@ -97,23 +96,25 @@ class ContentCache:
                     "filename": os.path.basename(img_path),
                     "base64": base64_img
                 })
-        
+
         content_cache = {
             "folder_path": os.path.abspath(folder_path),
             "documents": documents,
             "images": encoded_images,
             "total_documents": len(documents),
             "total_images": len(encoded_images),
-            "cache_timestamp": None
+            "cache_timestamp": None,
+            "content_type": "mixed" if documents and encoded_images else ("documents_only" if documents else "images_only")
         }
-        
-        # NEW: Generate image descriptions if images exist
+
+        # Generate image descriptions if images exist
         if encoded_images:
             logger.info("🖼️ Generating image descriptions...")
             content_cache = ContentCache.extract_image_descriptions(content_cache)
             logger.info("✅ Image descriptions generated")
-        
+
         return content_cache
+
 
     @staticmethod
     def get_content_summary(cache: Dict[str, Any]) -> str:
